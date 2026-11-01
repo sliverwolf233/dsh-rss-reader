@@ -1,0 +1,19 @@
+- insert:
+    - id: rss-reader
+      name: '@local/rss-reader'
+      config:
+        # 订阅保存在包目录旁的 .rss-reader-data.json；下面两个种子列表仅在数据文件为空时导入一次
+        initialFeeds:
+          - 'https://status.deepseek.com/feed.rss'
+          - 'https://status.deepseek.com/feed.atom'
+        fetch:
+          timeoutMs: 15000        # 单次抓取超时
+          maxBytes: 4194304       # 单个 feed 文档字节上限（超大源自动截断+抢救解析）
+          maxItemsPerFeed: 50     # 每次抓取保留条目上限（1-200）
+        historyPerFeed: 200       # 每源历史保留条目上限（持久化）
+        autoRefreshMinutes: 10    # 自动刷新间隔（分钟），0 = 关闭
+        fetchOnStart: true        # 启动时立即抓取一次
+        # 本机代理（Clash 等）：抓取与翻译优先走它，代理不在线时自动直连。
+        # 留空 '' 则完全直连（也可用环境变量 HTTPS_PROXY）。
+        proxyUrl: 'http://127.0.0.1:7897'
+        registerTools: true       # 注册 Agent 工具 rss_status/rss_refresh/rss_read/rss_manage

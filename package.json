@@ -1,0 +1,55 @@
+{
+  "name": "@local/rss-reader",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "RSS/Atom feed reader for DeepSeek Harness: subscribe to feeds, browse entries per source or all sources combined in a Web panel, with agent tools for reading and management.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "README.zh.md"
+  ],
+  "keywords": [
+    "rss",
+    "atom",
+    "feed",
+    "reader",
+    "jsonfeed"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-typert-protocol": "*",
+    "undici": ">=6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/schemastery": { "optional": true },
+    "@deepseek-ai/dsh-typert-protocol": { "optional": true },
+    "undici": { "optional": true }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-sidebar"]
+    }
+  }
+}
