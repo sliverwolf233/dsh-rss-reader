@@ -5,7 +5,7 @@
  * 「RSS 阅读器」主面板（侧栏图标 + 左源列表/右文章列表），所有数据
  * 均通过 ctx.remote.rss 与 Host 交互，浏览器端不做任何 fetch。
  * 另含机器翻译：条目展开后的逐行对照翻译 + 面板内划词翻译弹层；
- * 以及 OPML 订阅导入/导出。
+ * 以及 OPML 订阅导入/导出；条目标题点击打开 Apple 风格全文弹窗。
  *
  * 结构照抄 @local/qq-connector 的 panel.js：
  *   apply = $mount(Remote) + ctx.inject(['remote.rss','slots','locale'], registerUi)。
@@ -53,6 +53,7 @@ window.__ModuleLoader__.load({
 				methodDescriptor('translate', ['request']),
 				methodDescriptor('exportOpml', []),
 				methodDescriptor('importOpml', ['request']),
+				methodDescriptor('entry', ['request']),
 				{
 					// 订阅状态流：yield { kind:'state', state: snapshot }；调用端可传 signal 取消
 					id: `${PACKAGE}#rss/follow`,
@@ -116,6 +117,11 @@ window.__ModuleLoader__.load({
 			'opml.exportFailed': '导出失败：{message}',
 			'opml.importFailed': '导入失败：{message}',
 			'opml.moreFailed': '还有 {n} 个未展示',
+			'modal.open': '打开原文',
+			'modal.translate': '翻译全文',
+			'modal.error': '加载失败：{message}',
+			'modal.retry': '重试',
+			'modal.close': '关闭',
 			'time.now': '刚刚',
 			'time.minutes': '{n} 分钟前',
 			'time.hours': '{n} 小时前',
@@ -167,6 +173,11 @@ window.__ModuleLoader__.load({
 			'opml.exportFailed': 'Export failed: {message}',
 			'opml.importFailed': 'Import failed: {message}',
 			'opml.moreFailed': '+{n} more',
+			'modal.open': 'Open original',
+			'modal.translate': 'Translate full text',
+			'modal.error': 'Failed to load: {message}',
+			'modal.retry': 'Retry',
+			'modal.close': 'Close',
 			'time.now': 'now',
 			'time.minutes': '{n}m ago',
 			'time.hours': '{n}h ago',
@@ -331,10 +342,11 @@ window.__ModuleLoader__.load({
 .dsh-rss-chip:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-primary,#1f1f1f)}
 .dsh-rss-chip:active{transform:scale(.97)}
 .dsh-rss-chipText{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-rss-itemTitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-primary,#1f1f1f);text-decoration:none}
-a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));text-decoration:underline}
-.dsh-rss-itemTitleNoLink{display:inline-flex;align-items:center;gap:5px;color:var(--dsw-alias-label-secondary,#545557)}
-.dsh-rss-itemTitleText{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-rss-itemTitle{flex:1;min-width:0;font-size:13px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-primary,#1f1f1f);text-decoration:none}
+.dsh-rss-itemTitleBtn{appearance:none;border:0;background:transparent;padding:0;cursor:pointer;font:inherit;color:inherit;display:flex;align-items:center;gap:5px;text-align:left}
+.dsh-rss-itemTitleBtn:hover .dsh-rss-itemTitleText{color:var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));text-decoration:underline}
+.dsh-rss-itemTitleNoLink{color:var(--dsw-alias-label-secondary,#545557)}
+.dsh-rss-itemTitleText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-rss-noLinkIcon{flex:none;color:var(--dsw-alias-label-tertiary,#7f8287)}
 .dsh-rss-itemTime{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#7f8287);font-variant-numeric:tabular-nums}
 .dsh-rss-itemBody{margin-top:3px;font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary,#545557);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;max-height:35px;opacity:.92;transition:max-height .18s ease-out,opacity .18s ease-out}
@@ -358,7 +370,7 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 .dsh-rss-spinner{flex:none;display:inline-block;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:dsh-rss-spin .8s linear infinite}
 @keyframes dsh-rss-spin{to{transform:rotate(360deg)}}
 .dsh-rss-allRow:focus-visible,.dsh-rss-feed:focus-visible,.dsh-rss-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:-2px}
-.dsh-rss-btn:focus-visible,.dsh-rss-chip:focus-visible,.dsh-rss-feedRefresh:focus-visible,.dsh-rss-site:focus-visible,.dsh-rss-popClose:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:1px}
+.dsh-rss-btn:focus-visible,.dsh-rss-chip:focus-visible,.dsh-rss-feedRefresh:focus-visible,.dsh-rss-site:focus-visible,.dsh-rss-popClose:focus-visible,.dsh-rss-itemTitleBtn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:1px}
 .dsh-rss-itemActions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:5px;min-width:0}
 .dsh-rss-transBtn{height:24px;padding:0 10px;font-size:11px;line-height:14px;border-radius:8px}
 .dsh-rss-transGhost{color:var(--dsw-alias-label-tertiary,#7f8287);border-color:transparent}
@@ -389,7 +401,38 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 .dsh-rss-importResultList{display:flex;flex-direction:column;gap:1px;min-width:0}
 .dsh-rss-importResultLine{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:15px;color:var(--dsw-alias-state-error-primary,#d54941)}
 .dsh-rss-importResultMore{font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,#7f8287)}
-@media (prefers-reduced-motion:reduce){.dsh-rss-root *:not(.dsh-rss-spinner){transition:none!important;transform:none!important}.dsh-rss-item{animation:none}.dsh-rss-pop{animation:none}.dsh-rss-spinner{animation-duration:1.6s}}
+.dsh-rss-modal{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:24px}
+.dsh-rss-modalMask{position:absolute;inset:0;background:rgba(0,0,0,.42);background:color-mix(in srgb,var(--dsw-static-neutral-1000,#000) 42%,transparent);animation:dsh-rss-modalFadeIn .2s ease-out}
+.dsh-rss-modalPanel{position:relative;display:flex;flex-direction:column;width:min(720px,100%);max-height:85vh;border-radius:18px;border:.5px solid var(--dsw-alias-border-l2,#e5e5e5);background:color-mix(in srgb,var(--dsw-alias-bg-base,#fff) 86%,transparent);backdrop-filter:blur(24px) saturate(1.6);-webkit-backdrop-filter:blur(24px) saturate(1.6);box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 45%,transparent),0 24px 64px rgba(0,0,0,.28);overflow:hidden;animation:dsh-rss-modalIn .22s ease-out}
+@keyframes dsh-rss-modalIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+@keyframes dsh-rss-modalOut{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(.96)}}
+@keyframes dsh-rss-modalFadeIn{from{opacity:0}to{opacity:1}}
+@keyframes dsh-rss-modalFadeOut{from{opacity:1}to{opacity:0}}
+.dsh-rss-modal[data-closing=true] .dsh-rss-modalMask{animation:dsh-rss-modalFadeOut .18s ease-out forwards}
+.dsh-rss-modal[data-closing=true] .dsh-rss-modalPanel{animation:dsh-rss-modalOut .18s ease-out forwards}
+.dsh-rss-modalClose{position:absolute;top:10px;right:10px;z-index:2;display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:50%;background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-secondary,#545557);font:inherit;font-size:15px;line-height:1;cursor:pointer;transition:transform .1s ease-out,background-color .12s ease-out,color .12s ease-out}
+.dsh-rss-modalClose:hover{color:var(--dsw-alias-label-primary,#1f1f1f)}
+.dsh-rss-modalClose:active{transform:scale(.9)}
+.dsh-rss-modalClose:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));outline-offset:1px}
+.dsh-rss-modalBody{flex:1;min-height:0;overflow-y:auto;padding:24px 28px 16px}
+.dsh-rss-modalTitle{margin:0 40px 10px 0;font-size:20px;font-weight:700;letter-spacing:-0.02em;line-height:1.35;color:var(--dsw-alias-label-primary,#1f1f1f);overflow-wrap:anywhere}
+.dsh-rss-modalMeta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin-bottom:18px;font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary,#7f8287)}
+.dsh-rss-modalFeed{max-width:220px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--dsw-alias-label-secondary,#545557)}
+.dsh-rss-modalTime{font-variant-numeric:tabular-nums}
+.dsh-rss-modalOpen{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));text-decoration:none;font-weight:500}
+.dsh-rss-modalOpen:hover{text-decoration:underline}
+.dsh-rss-modalText{display:flex;flex-direction:column;gap:14px;padding-bottom:6px}
+.dsh-rss-modalPara{margin:0;font-size:14px;line-height:1.6;color:var(--dsw-alias-label-primary,#1f1f1f);overflow-wrap:anywhere;white-space:pre-wrap}
+.dsh-rss-modalParallel{margin-top:0;gap:12px}
+.dsh-rss-modal .dsh-rss-pairOriginal,.dsh-rss-modal .dsh-rss-pairTrans{font-size:14px;line-height:1.6}
+.dsh-rss-modalTransError{margin-top:12px;font-size:12px;line-height:16px;color:var(--dsw-alias-state-error-primary,#d54941);overflow-wrap:anywhere}
+.dsh-rss-modalFooter{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:.5px solid var(--dsw-alias-border-l2,#e5e5e5)}
+.dsh-rss-modalFooterOpen{text-decoration:none}
+a.dsh-rss-btn.dsh-rss-modalFooterOpen:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}
+.dsh-rss-modalLoading{display:flex;flex-direction:column;align-items:center;gap:10px;padding:40px 0;color:var(--dsw-alias-label-tertiary,#7f8287);font-size:13px}
+.dsh-rss-modalError{display:flex;flex-direction:column;align-items:center;gap:10px;padding:32px 0;font-size:13px;color:var(--dsw-alias-state-error-primary,#d54941)}
+.dsh-rss-modalErrorText{overflow-wrap:anywhere;text-align:center}
+@media (prefers-reduced-motion:reduce){.dsh-rss-root *:not(.dsh-rss-spinner){transition:none!important;transform:none!important}.dsh-rss-item{animation:none}.dsh-rss-pop{animation:none}.dsh-rss-modalPanel{animation-name:dsh-rss-modalFadeIn}.dsh-rss-modal[data-closing=true] .dsh-rss-modalPanel{animation-name:dsh-rss-modalFadeOut}.dsh-rss-spinner{animation-duration:1.6s}}
 `;
 		//#endregion
 
@@ -620,24 +663,25 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 				)
 			);
 		}
-		/**右侧文章行：来源 chip（全部视图）+ 标题链接 + 相对时间 + 2 行摘要（可展开、可对照翻译）。 */
-		function ItemView({ item, showSource, open, onToggle, onSelectSource, trans, onTranslate, t }) {
+		/**右侧文章行：来源 chip（全部视图）+ 标题按钮（点击打开全文弹窗）+ 相对时间 + 2 行摘要（可展开、可对照翻译）。 */
+		function ItemView({ item, showSource, open, onToggle, onSelectSource, onOpenEntry, trans, onTranslate, t }) {
 			const title = typeof item.title === 'string' && item.title ? item.title : t('item.untitled');
 			const hasLink = typeof item.link === 'string' && item.link.length > 0;
 			const timeText = relTime(item.publishedAt, t);
 			const toggle = () => onToggle(item.id);
-			let titleNode;
-			if (hasLink) {
-				titleNode = h('a', {
-					className: 'dsh-rss-itemTitle', href: item.link, target: '_blank', rel: 'noreferrer noopener',
-					title: item.title || undefined, onClick: (event) => event.stopPropagation()
-				}, title);
-			} else {
-				titleNode = h('span', { className: 'dsh-rss-itemTitle dsh-rss-itemTitleNoLink', title: t('item.noLink') },
-					h('span', { className: 'dsh-rss-noLinkIcon' }, h(NoLinkIcon)),
-					h('span', { className: 'dsh-rss-itemTitleText' }, title)
-				);
-			}
+			// 标题=打开全文弹窗（仍是可聚焦控件，Enter 原生触发 click）；阻止 keydown 冒泡到行（行 Enter/Space=展开摘要）
+			const titleNode = h('button', {
+				className: 'dsh-rss-itemTitle dsh-rss-itemTitleBtn' + (hasLink ? '' : ' dsh-rss-itemTitleNoLink'),
+				type: 'button',
+				title: item.title || t('item.untitled'),
+				onClick: (event) => { event.stopPropagation(); onOpenEntry(item, event.currentTarget); },
+				onKeyDown: (event) => {
+					if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+				}
+			},
+				hasLink ? null : h('span', { className: 'dsh-rss-noLinkIcon' }, h(NoLinkIcon)),
+				h('span', { className: 'dsh-rss-itemTitleText' }, title)
+			);
 			const transState = trans || { showing: false, loading: false, error: '', prominent: false, pairs: null };
 			let bodyNode;
 			if (transState.pairs && transState.pairs.length) {
@@ -689,6 +733,98 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 				actionsNode
 			);
 		}
+		/**全文阅读弹窗（Apple 风格磨砂浮层）：外站内容全部纯文本节点渲染，焦点圈定在弹窗内。 */
+		function EntryModal({ item, entry, loading, error, closing, full, onTranslateFull, onRetry, onClose, t }) {
+			const { useEffect, useRef } = React;
+			const panelRef = useRef(null);
+			const closeRef = useRef(null);
+			// 打开即聚焦关闭按钮（焦点随弹层进入；卸载时由外层归还触发标题）
+			useEffect(() => {
+				const el = closeRef.current;
+				if (el) el.focus();
+			}, []);
+			/**焦点圈定：Tab 在弹窗内首/末可聚焦元素间循环；Esc 关闭（stopPropagation 免触其他 Esc 逻辑）。 */
+			const onKeyDown = (event) => {
+				if (event.key === 'Escape') { event.stopPropagation(); onClose(); return; }
+				if (event.key !== 'Tab') return;
+				const panel = panelRef.current;
+				if (!panel) return;
+				const nodes = panel.querySelectorAll('a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])');
+				const list = [];
+				for (const node of nodes) if (node.offsetParent !== null) list.push(node);
+				if (!list.length) return;
+				const first = list[0];
+				const last = list[list.length - 1];
+				const active = document.activeElement;
+				if (event.shiftKey && active === first) { event.preventDefault(); last.focus(); }
+				else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus(); }
+			};
+			const feedTitle = entry && entry.feedTitle ? entry.feedTitle : item.feedTitle;
+			const publishedAt = entry && typeof entry.publishedAt === 'number' ? entry.publishedAt : item.publishedAt;
+			const link = entry && typeof entry.link === 'string' ? entry.link : item.link;
+			const title = entry && entry.title ? entry.title : (item.title || t('item.untitled'));
+			const bodyText = entry ? String(entry.content || entry.summary || '') : '';
+			let bodyNode;
+			if (loading) {
+				bodyNode = h('div', { className: 'dsh-rss-modalLoading' }, h(Spinner, { size: 18 }), t('list.loading'));
+			} else if (error) {
+				bodyNode = h('div', { className: 'dsh-rss-modalError' },
+					h('div', { className: 'dsh-rss-modalErrorText' }, error),
+					h('button', { className: 'dsh-rss-btn', onClick: onRetry }, t('modal.retry'))
+				);
+			} else if (full.pairs && full.pairs.length) {
+				// 全文对照：机译 chip + 逐段「原文 / 译文」（复用列表对照样式，弹窗内放大字号）
+				bodyNode = h('div', { className: 'dsh-rss-parallel dsh-rss-modalParallel' },
+					h('span', { className: 'dsh-rss-mtChip' }, t('translate.chip')),
+					full.pairs.map((pair, index) => h('div', { key: index, className: 'dsh-rss-pair' },
+						h('div', { className: 'dsh-rss-pairOriginal' }, pair.original),
+						h('div', { className: 'dsh-rss-pairTrans' }, pair.translated)
+					))
+				);
+			} else if (bodyText) {
+				bodyNode = h('div', { className: 'dsh-rss-modalText' },
+					bodyText.split('\n').map((para, index) => h('p', { key: index, className: 'dsh-rss-modalPara' }, para))
+				);
+			} else {
+				bodyNode = null;
+			}
+			return h('div', { className: 'dsh-rss-modal', 'data-closing': closing ? 'true' : undefined, onKeyDown },
+				h('div', { className: 'dsh-rss-modalMask', onClick: onClose, 'aria-hidden': 'true' }),
+				h('div', { className: 'dsh-rss-modalPanel', ref: panelRef, role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+					h('button', {
+						className: 'dsh-rss-modalClose',
+						ref: closeRef,
+						onClick: onClose,
+						'aria-label': t('modal.close'),
+						title: t('modal.close')
+					}, '×'),
+					h('div', { className: 'dsh-rss-modalBody' },
+						h('h2', { className: 'dsh-rss-modalTitle' }, title),
+						h('div', { className: 'dsh-rss-modalMeta' },
+							feedTitle ? h('span', { className: 'dsh-rss-modalFeed', title: feedTitle }, feedTitle) : null,
+							feedTitle && publishedAt ? h('span', { 'aria-hidden': 'true' }, '·') : null,
+							publishedAt ? h('span', { className: 'dsh-rss-modalTime' }, fullTime(publishedAt)) : null,
+							link ? h('a', { className: 'dsh-rss-modalOpen', href: link, target: '_blank', rel: 'noreferrer noopener' },
+								h(ExternalIcon), h('span', null, t('modal.open'))) : null
+						),
+						bodyNode,
+						full.error ? h('div', { className: 'dsh-rss-modalTransError' }, full.error) : null
+					),
+					h('div', { className: 'dsh-rss-modalFooter' },
+						link ? h('a', { className: 'dsh-rss-btn dsh-rss-modalFooterOpen', href: link, target: '_blank', rel: 'noreferrer noopener' },
+							h(ExternalIcon), t('modal.open')) : null,
+						h('button', {
+							className: 'dsh-rss-btn' + (full.pairs ? '' : ' dsh-rss-btn-accent'),
+							onClick: onTranslateFull,
+							disabled: full.loading || loading || !!error || !bodyText
+						},
+							full.loading ? h(Spinner, { size: 12 }) : null,
+							full.pairs ? t('translate.showOriginal') : t('modal.translate')
+						)
+					)
+				)
+			);
+		}
 		//#endregion
 
 		//#region 主面板
@@ -720,6 +856,12 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 			const [exporting, setExporting] = useState(false); // OPML 导出中
 			const [importing, setImporting] = useState(false); // OPML 导入中（逐源校验较慢）
 			const [importResult, setImportResult] = useState(null); // 导入结果摘要 { added, failed[] }
+			const [modal, setModal] = useState(null); // 全文弹窗 { item, closing }
+			const [modalEntry, setModalEntry] = useState(null); // entry() 返回的全文条目
+			const [modalLoading, setModalLoading] = useState(false);
+			const [modalError, setModalError] = useState(null);
+			const [modalRetry, setModalRetry] = useState(0); // 递增触发重试
+			const [fullTrans, setFullTrans] = useState({ loading: false, error: '', pairs: null }); // 全文翻译对照
 
 			const backoffRef = useRef(1000);
 			const timerRef = useRef(0);
@@ -735,6 +877,10 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 			const selCacheRef = useRef([]); // 最近 ~10 条划词翻译结果
 			const popSeqRef = useRef(0); // 弹层异步序号（旧响应作废）
 			const fileInputRef = useRef(null); // 隐藏的 OPML 文件选择框
+			const modalTimerRef = useRef(0); // 弹窗关闭动画定时器
+			const modalTokenRef = useRef(0); // 弹窗数据请求序号（旧响应作废）
+			const entryTriggerRef = useRef(null); // 触发弹窗的标题按钮（关闭后归还焦点）
+			const fullTransCacheRef = useRef(new Map()); // `${item.id}|full|${to}` -> pairs
 
 			selectedRef.current = selectedFeedId;
 
@@ -1051,6 +1197,100 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 				}
 			}
 
+			/**打开全文弹窗（记录触发元素，关闭后归还焦点）。 */
+			function openEntryModal(item, triggerEl) {
+				entryTriggerRef.current = triggerEl || null;
+				setModal({ item, closing: false });
+			}
+
+			/**关闭全文弹窗：先播对称关闭动画，动画后卸载并归还焦点。 */
+			function closeEntryModal() {
+				setModal((prev) => prev && !prev.closing ? { ...prev, closing: true } : prev);
+				clearTimeout(modalTimerRef.current);
+				modalTimerRef.current = setTimeout(() => {
+					setModal(null);
+					setModalEntry(null);
+					setModalError(null);
+					setModalLoading(false);
+					setFullTrans({ loading: false, error: '', pairs: null });
+					const el = entryTriggerRef.current;
+					entryTriggerRef.current = null;
+					if (el && el.isConnected && typeof el.focus === 'function') {
+						try { el.focus(); } catch (_) { /* 忽略 */ }
+					}
+				}, 190);
+			}
+
+			// 弹窗打开时拉取 entry()（含 content）；modalRetry 递增即重试
+			const modalId = modal ? modal.item.id : null;
+			useEffect(() => {
+				if (!modalId) return;
+				const token = ++modalTokenRef.current;
+				setModalLoading(true);
+				setModalError(null);
+				setModalEntry(null);
+				setFullTrans({ loading: false, error: '', pairs: null });
+				api.entry({ id: modalId }).then((result) => {
+					if (token !== modalTokenRef.current) return;
+					setModalEntry(result && typeof result === 'object' ? result : null);
+				}).catch((error) => {
+					if (token !== modalTokenRef.current) return;
+					setModalError(t('modal.error', { message: fmtError(error) }));
+				}).finally(() => {
+					if (token === modalTokenRef.current) setModalLoading(false);
+				});
+			}, [modalId, modalRetry, api, t]);
+
+			/**全文翻译：content 按段切块（每段 ≤900、每批 ≤50 段且合计 ≤6000 字符），多批顺序调用后拼接对照。 */
+			async function handleTranslateFull() {
+				if (fullTrans.loading || !modal || !modalEntry) return;
+				if (fullTrans.pairs) { setFullTrans({ loading: false, error: '', pairs: null }); return; } // 切回原文
+				const bodyText = String(modalEntry.content || modalEntry.summary || '');
+				const paragraphs = bodyText.split('\n').map((para) => para.trim().slice(0, 900)).filter(Boolean);
+				if (!paragraphs.length) return;
+				const to = targetLang(localeId);
+				const key = modal.item.id + '|full|' + to;
+				const cache = fullTransCacheRef.current;
+				if (cache.has(key)) { setFullTrans({ loading: false, error: '', pairs: cache.get(key) }); return; }
+				// 分批：批内 ≤50 段、合计 ≤6000 字符（单段最长 900，必能入批）
+				const batches = [];
+				let batch = [];
+				let chars = 0;
+				for (const para of paragraphs) {
+					if (batch.length && (batch.length >= 50 || chars + para.length > 6000)) {
+						batches.push(batch);
+						batch = [];
+						chars = 0;
+					}
+					batch.push(para);
+					chars += para.length;
+				}
+				if (batch.length) batches.push(batch);
+				setFullTrans({ loading: true, error: '', pairs: null });
+				const pairs = [];
+				try {
+					for (const current of batches) {
+						const result = await api.translate({ texts: current, to });
+						const outs = result && Array.isArray(result.items) ? result.items : [];
+						for (let i = 0; i < current.length; i++) {
+							const one = outs[i] || null;
+							pairs.push({ original: current[i], translated: one && typeof one.text === 'string' ? one.text : '' });
+						}
+					}
+					if (cache.size > 60) {
+						const oldest = cache.keys().next().value;
+						if (oldest !== undefined) cache.delete(oldest);
+					}
+					cache.set(key, pairs);
+					setFullTrans({ loading: false, error: '', pairs });
+				} catch (error) {
+					setFullTrans({ loading: false, error: t('translate.error', { message: fmtError(error) }), pairs: null });
+				}
+			}
+
+			// 卸载清理弹窗定时器
+			useEffect(() => () => { clearTimeout(modalTimerRef.current); }, []);
+
 			/**关闭划词弹层；keepTimer=true 时保留防抖（紧随其后的新选区仍可触发）。 */
 			function dismissPopover(keepTimer) {
 				popSeqRef.current++;
@@ -1083,6 +1323,7 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 			async function processSelection() {
 				const root = rootRef.current;
 				if (!root || typeof window.getSelection !== 'function') { setPopover(null); return; }
+				if (modal) { setPopover(null); return; } // 全文弹窗打开时不做划词翻译
 				const sel = window.getSelection();
 				if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { setPopover(null); return; }
 				const text = String(sel.toString() || '').trim();
@@ -1340,6 +1581,7 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 							open: !!expanded[item.id],
 							onToggle: toggleExpand,
 							onSelectSource: (feedId) => { if (feedId) setSelectedFeedId(feedId); },
+							onOpenEntry: openEntryModal,
 							trans: {
 								showing: !!entry,
 								loading: !!transLoading[item.id],
@@ -1415,6 +1657,21 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 				);
 			}
 
+			// —— 全文弹窗（key 按条目 id，每次打开重新挂载以重放入场动画） ——
+			const modalNode = modal ? h(EntryModal, {
+				key: 'modal-' + modal.item.id,
+				item: modal.item,
+				entry: modalEntry,
+				loading: modalLoading,
+				error: modalError,
+				closing: modal.closing,
+				full: fullTrans,
+				onTranslateFull: () => { void handleTranslateFull(); },
+				onRetry: () => setModalRetry((n) => n + 1),
+				onClose: closeEntryModal,
+				t
+			}) : null;
+
 			return h('div', {
 				className: 'dsh-rss-root',
 				ref: rootRef,
@@ -1439,7 +1696,8 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 					searchRow,
 					listArea
 				),
-				popNode
+				popNode,
+				modalNode
 			);
 		}
 		//#endregion
@@ -1470,6 +1728,7 @@ a.dsh-rss-itemTitle:hover{color:var(--dsw-alias-brand-primary,var(--dsw-alias-st
 				translate: (request) => unwrap(ctx.remote.rss.translate(request)),
 				exportOpml: () => unwrap(ctx.remote.rss.exportOpml()),
 				importOpml: (request) => unwrap(ctx.remote.rss.importOpml(request)),
+				entry: (request) => unwrap(ctx.remote.rss.entry(request)),
 				follow: (signal) => ctx.remote.rss.follow(signal)
 			};
 			// UI 语言 id（尽力从 ctx.locale 读取；取不到时组件内回退 navigator.language）

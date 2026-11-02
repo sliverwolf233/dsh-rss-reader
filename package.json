@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "RSS/Atom feed reader for DeepSeek Harness: subscribe to feeds, browse entries per source or all sources combined in a Web panel, with agent tools for reading and management.",
+  "scripts": {
+    "test": "node test/run.mjs && node test/hub.mjs"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

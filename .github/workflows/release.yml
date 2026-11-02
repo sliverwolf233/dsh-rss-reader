@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax-check sources and tests
+        run: |
+          set -e
+          for f in index.js client.js lib/*.js test/*.mjs; do
+            echo "node --check $f"
+            node --check "$f"
+          done
+
+      - name: Run parser tests (test/run.mjs)
+        run: node test/run.mjs
+
+      - name: Run hub tests (test/hub.mjs)
+        run: node test/hub.mjs
+
+      - name: Build release archive
+        run: |
+          zip -r "dsh-rss-reader-${GITHUB_REF_NAME}.zip" \
+            index.js client.js lib locale icon.svg cordis.patch.yml \
+            package.json README.md README.zh.md LICENSE
+          unzip -l "dsh-rss-reader-${GITHUB_REF_NAME}.zip"
+
+      - name: Create GitHub Release and upload archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "dsh-rss-reader-${GITHUB_REF_NAME}.zip" \
+            --title "dsh-rss-reader ${GITHUB_REF_NAME}" \
+            --generate-notes
