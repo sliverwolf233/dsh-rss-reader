@@ -33,6 +33,9 @@ jobs:
       - name: Run hub tests (test/hub.mjs)
         run: node test/hub.mjs
 
+      - name: Run markdown tests (test/markdown.mjs)
+        run: node test/markdown.mjs
+
       - name: Build release archive
         run: |
           zip -r "dsh-rss-reader-${GITHUB_REF_NAME}.zip" \

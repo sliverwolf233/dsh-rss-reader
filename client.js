@@ -26,6 +26,48 @@ window.__ModuleLoader__.load({
 		const PANEL_ID = 'rss';
 		//#endregion
 
+		//#region Markdown 纯函数（零闭包依赖；test/markdown.mjs 按下方标记提取测试）
+		// [md-pure-start]
+		/**
+		 * 链接协议白名单：仅 http/https 绝对 URL 放行（解析后看 protocol），
+		 * 返回规范化 href；其余（javascript:/data:/相对路径/垃圾串）一律 null，
+		 * 调用方降级为纯文本。图片在此基础上再要求 https。
+		 */
+		function safeUrl(raw) {
+			if (typeof raw !== 'string' || raw.length === 0 || raw.length > 2000) return null;
+			let parsed;
+			try { parsed = new URL(raw.trim()); } catch { return null; }
+			return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+		}
+
+		/**
+		 * 保守判定一段全文是否按 Markdown 渲染：统计行级强特征类别，
+		 * 至少命中两类才判真——宁可当纯文本，不要误渲染。
+		 * 类别：标题 / ``` 围栏 / 无序或有序列表 / 行内链接≥2 / **粗**或`码`≥3 / 引用 / 分隔线。
+		 */
+		function looksLikeMarkdown(text) {
+			if (typeof text !== 'string' || text.length < 16) return false;
+			const classes = new Set();
+			let inlineLinks = 0;
+			let emphasis = 0;
+			for (const rawLine of text.split('\n')) {
+				const line = rawLine.trim();
+				if (/^#{1,4}\s+\S/.test(line)) classes.add('heading');
+				if (line.startsWith('```')) classes.add('fence');
+				if (/^[-*+]\s+\S/.test(line) || /^\d{1,3}\.\s+\S/.test(line)) classes.add('list');
+				if (/^>\s*\S/.test(line)) classes.add('quote');
+				if (/^(-{3,}|\*{3,})$/.test(line)) classes.add('hr');
+				inlineLinks += (line.match(/\[[^\]\n]{1,120}\]\([^)\s]{1,400}\)/g) || []).length;
+				emphasis += (line.match(/\*\*[^*\n]{1,120}\*\*/g) || []).length;
+				emphasis += (line.match(/`[^`\n]{1,120}`/g) || []).length;
+			}
+			if (inlineLinks >= 2) classes.add('links');
+			if (emphasis >= 3) classes.add('emphasis');
+			return classes.size >= 2;
+		}
+		// [md-pure-end]
+		//#endregion
+
 		//#region Remote 贡献（结构照抄 qq-connector 的 QQ_REMOTE；codec.create 仅为占位）
 		/**宽松 codec：校验只要求 create 是函数，运行时不会调用。 */
 		const anyCodec = { mode: 'strict', typeSymbol: 'rss/any', create: () => undefined };
@@ -119,6 +161,7 @@ window.__ModuleLoader__.load({
 			'opml.moreFailed': '还有 {n} 个未展示',
 			'modal.open': '打开原文',
 			'modal.translate': '翻译全文',
+			'modal.translating': '翻译中 {done}/{total} 批',
 			'modal.error': '加载失败：{message}',
 			'modal.retry': '重试',
 			'modal.close': '关闭',
@@ -175,6 +218,7 @@ window.__ModuleLoader__.load({
 			'opml.moreFailed': '+{n} more',
 			'modal.open': 'Open original',
 			'modal.translate': 'Translate full text',
+			'modal.translating': 'Translating {done}/{total}',
 			'modal.error': 'Failed to load: {message}',
 			'modal.retry': 'Retry',
 			'modal.close': 'Close',
@@ -432,6 +476,28 @@ a.dsh-rss-btn.dsh-rss-modalFooterOpen:hover{background:var(--dsw-alias-interacti
 .dsh-rss-modalLoading{display:flex;flex-direction:column;align-items:center;gap:10px;padding:40px 0;color:var(--dsw-alias-label-tertiary,#7f8287);font-size:13px}
 .dsh-rss-modalError{display:flex;flex-direction:column;align-items:center;gap:10px;padding:32px 0;font-size:13px;color:var(--dsw-alias-state-error-primary,#d54941)}
 .dsh-rss-modalErrorText{overflow-wrap:anywhere;text-align:center}
+.dsh-rss-md{display:flex;flex-direction:column;gap:12px;padding-bottom:6px}
+.dsh-rss-mdH1{margin:16px 0 0;font-size:22px;font-weight:700;letter-spacing:-.02em;line-height:1.3;color:var(--dsw-alias-label-primary,#1f1f1f);overflow-wrap:anywhere}
+.dsh-rss-mdH2{margin:14px 0 0;font-size:19px;font-weight:700;letter-spacing:-.02em;line-height:1.3;color:var(--dsw-alias-label-primary,#1f1f1f);overflow-wrap:anywhere}
+.dsh-rss-mdH3{margin:12px 0 0;font-size:17px;font-weight:600;letter-spacing:-.02em;line-height:1.35;color:var(--dsw-alias-label-primary,#1f1f1f);overflow-wrap:anywhere}
+.dsh-rss-mdH4{margin:10px 0 0;font-size:15px;font-weight:600;letter-spacing:-.02em;line-height:1.4;color:var(--dsw-alias-label-primary,#1f1f1f);overflow-wrap:anywhere}
+.dsh-rss-mdPara{margin:0;font-size:14px;line-height:1.6;color:var(--dsw-alias-label-primary,#1f1f1f);overflow-wrap:anywhere;white-space:pre-wrap}
+.dsh-rss-mdPre{margin:0;padding:12px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f5f5f5);border:.5px solid var(--dsw-alias-border-l2,#e5e5e5);overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.5;color:var(--dsw-alias-label-primary,#1f1f1f)}
+.dsh-rss-mdPre code{font:inherit;white-space:pre}
+.dsh-rss-mdCode{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;font-size:12.5px;padding:1px 5px;border-radius:5px;background:var(--dsw-alias-bg-layer-2,#f5f5f5);overflow-wrap:anywhere}
+.dsh-rss-mdStrong{font-weight:600}
+.dsh-rss-mdEm{font-style:italic}
+.dsh-rss-mdLink{color:var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6)) 35%,transparent);overflow-wrap:anywhere}
+.dsh-rss-mdLink:hover{border-bottom-color:var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6))}
+.dsh-rss-mdImg{display:block;max-width:100%;height:auto;border-radius:10px}
+.dsh-rss-mdImgFallback{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#7f8287);overflow-wrap:anywhere}
+.dsh-rss-mdList{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.6;color:var(--dsw-alias-label-primary,#1f1f1f)}
+.dsh-rss-mdList li{overflow-wrap:anywhere}
+.dsh-rss-mdListOrdered{list-style:decimal}
+.dsh-rss-mdList:not(.dsh-rss-mdListOrdered){list-style:disc}
+.dsh-rss-mdQuote{margin:0;padding:2px 0 2px 12px;border-left:3px solid var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#4176e6));display:flex;flex-direction:column;gap:6px;color:var(--dsw-alias-label-secondary,#545557)}
+.dsh-rss-mdQuotePara{margin:0;font-size:14px;line-height:1.6;overflow-wrap:anywhere;white-space:pre-wrap}
+.dsh-rss-mdHr{margin:4px 0;border:0;border-top:.5px solid var(--dsw-alias-border-l2,#e5e5e5)}
 @media (prefers-reduced-motion:reduce){.dsh-rss-root *:not(.dsh-rss-spinner){transition:none!important;transform:none!important}.dsh-rss-item{animation:none}.dsh-rss-pop{animation:none}.dsh-rss-modalPanel{animation-name:dsh-rss-modalFadeIn}.dsh-rss-modal[data-closing=true] .dsh-rss-modalPanel{animation-name:dsh-rss-modalFadeOut}.dsh-rss-spinner{animation-duration:1.6s}}
 `;
 		//#endregion
@@ -733,6 +799,170 @@ a.dsh-rss-btn.dsh-rss-modalFooterOpen:hover{background:var(--dsw-alias-interacti
 				actionsNode
 			);
 		}
+		//#region Markdown 渲染（手写解析器直产 React 元素；feed 全文是不可信数据）
+		/**
+		 * 行内解析：单趟扫描产 span/strong/code/a/img 数组——**粗**、*斜*、`行内码`、
+		 * [文](url) 与 ![alt](url)；裸 URL 不自动链接（保守）。不合法链接/图片降级为
+		 * 原文字面纯文本节点；源文本中的 HTML 标签天然按字面转义（React 文本节点）。
+		 */
+		function mdInline(text, keyPrefix, altFallback) {
+			const source = String(text ?? '');
+			const nodes = [];
+			let buffer = '';
+			let key = 0;
+			const flush = () => { if (buffer !== '') { nodes.push(buffer); buffer = ''; } };
+			for (let i = 0; i < source.length; i++) {
+				const ch = source[i];
+				if (ch === '!' && source[i + 1] === '[') {
+					const close = source.indexOf(']', i + 2);
+					if (close > i + 1 && source[close + 1] === '(') {
+						const endParen = source.indexOf(')', close + 2);
+						if (endParen > close + 1) {
+							const alt = source.slice(i + 2, close);
+							const raw = source.slice(close + 2, endParen);
+							const url = safeUrl(raw);
+							flush();
+							if (url !== null && url.startsWith('https://')) {
+								nodes.push(h('img', {
+									key: keyPrefix + '-' + (key++), className: 'dsh-rss-mdImg', src: url,
+									alt: alt || (altFallback || ''), loading: 'lazy', referrerPolicy: 'no-referrer',
+									onError: (event) => { event.currentTarget.style.display = 'none'; }
+								}));
+							} else {
+								nodes.push(h('span', { key: keyPrefix + '-' + (key++), className: 'dsh-rss-mdImgFallback' }, `![${alt}](${raw})`));
+							}
+							i = endParen;
+							continue;
+						}
+					}
+				} else if (ch === '`') {
+					const end = source.indexOf('`', i + 1);
+					if (end > i + 1 && !source.slice(i + 1, end).includes('\n')) {
+						flush();
+						nodes.push(h('code', { key: keyPrefix + '-' + (key++), className: 'dsh-rss-mdCode' }, source.slice(i + 1, end)));
+						i = end;
+						continue;
+					}
+				} else if (ch === '*' && source[i + 1] === '*') {
+					const end = source.indexOf('**', i + 2);
+					if (end > i + 2 && !source.slice(i + 2, end).includes('\n')) {
+						flush();
+						nodes.push(h('strong', { key: keyPrefix + '-' + (key++), className: 'dsh-rss-mdStrong' }, source.slice(i + 2, end)));
+						i = end + 1;
+						continue;
+					}
+				} else if (ch === '*' && source[i + 1] !== '*' && source[i + 1] !== ' ') {
+					const end = source.indexOf('*', i + 1);
+					const inner = end > i + 1 ? source.slice(i + 1, end) : '';
+					if (end > i + 1 && source[end + 1] !== '*' && !inner.includes('\n') && !inner.endsWith(' ')) {
+						flush();
+						nodes.push(h('em', { key: keyPrefix + '-' + (key++), className: 'dsh-rss-mdEm' }, inner));
+						i = end;
+						continue;
+					}
+				} else if (ch === '[') {
+					const close = source.indexOf(']', i + 1);
+					if (close > i && source[close + 1] === '(') {
+						const endParen = source.indexOf(')', close + 2);
+						if (endParen > close + 1) {
+							const label = source.slice(i + 1, close);
+							const url = safeUrl(source.slice(close + 2, endParen));
+							if (label.length > 0 && label.length <= 200 && url !== null) {
+								flush();
+								nodes.push(h('a', {
+									key: keyPrefix + '-' + (key++), className: 'dsh-rss-mdLink', href: url,
+									target: '_blank', rel: 'noreferrer noopener'
+								}, label));
+								i = endParen;
+								continue;
+							}
+						}
+					}
+				}
+				buffer += ch;
+			}
+			flush();
+			return nodes;
+		}
+
+		/**
+		 * Markdown 块级渲染：按行扫描状态机 → 直接产出 React 元素（标题 h1-h4、
+		 * 段落、代码围栏、一层 ul/ol、blockquote、hr）。绝不生成 HTML 字符串，
+		 * 绝不使用 dangerouslySetInnerHTML。
+		 */
+		function MarkdownView({ text, altFallback }) {
+			const lines = String(text ?? '').split('\n');
+			const blocks = [];
+			let key = 0;
+			const isSpecial = (t) => t.startsWith('```') || /^#{1,4}\s+\S/.test(t) || /^[-*+]\s+\S/.test(t)
+				|| /^\d{1,3}\.\s+\S/.test(t) || /^>\s*\S/.test(t) || /^(-{3,}|\*{3,})$/.test(t);
+			let i = 0;
+			while (i < lines.length) {
+				const line = lines[i];
+				const trimmed = line.trim();
+				if (trimmed === '') { i += 1; continue; }
+				if (trimmed.startsWith('```')) {
+					i += 1;
+					const code = [];
+					while (i < lines.length && !lines[i].trim().startsWith('```')) { code.push(lines[i]); i += 1; }
+					i += 1; // 收尾围栏（截断文本无围栏时自然结束）
+					blocks.push(h('pre', { key: key++, className: 'dsh-rss-mdPre' }, h('code', null, code.join('\n'))));
+					continue;
+				}
+				const heading = /^(#{1,4})\s+(.*)$/.exec(trimmed);
+				if (heading !== null) {
+					const level = heading[1].length;
+					blocks.push(h(`h${level}`, { key: key++, className: `dsh-rss-mdH${level}` }, mdInline(heading[2], `h${key}`, altFallback)));
+					i += 1;
+					continue;
+				}
+				if (/^(-{3,}|\*{3,})$/.test(trimmed)) {
+					blocks.push(h('hr', { key: key++, className: 'dsh-rss-mdHr' }));
+					i += 1;
+					continue;
+				}
+				if (/^>\s*\S/.test(trimmed)) {
+					const quote = [];
+					while (i < lines.length && /^>\s*\S/.test(lines[i].trim())) {
+						quote.push(lines[i].trim().replace(/^>\s?/, ''));
+						i += 1;
+					}
+					blocks.push(h('blockquote', { key: key++, className: 'dsh-rss-mdQuote' },
+						quote.map((para, index) => h('p', { key: index, className: 'dsh-rss-mdQuotePara' }, mdInline(para, `q${key}-${index}`, altFallback)))));
+					continue;
+				}
+				if (/^[-*+]\s+\S/.test(trimmed) || /^\d{1,3}\.\s+\S/.test(trimmed)) {
+					const ordered = /^\d/.test(trimmed);
+					const items = [];
+					while (i < lines.length) {
+						const t = lines[i].trim();
+						if ((ordered ? /^\d{1,3}\.\s+\S/ : /^[-*+]\s+\S/).test(t)) {
+							items.push(t.replace(ordered ? /^\d{1,3}\.\s+/ : /^[-*+]\s+/, ''));
+							i += 1;
+							continue;
+						}
+						if (t !== '' && /^\s/.test(lines[i]) && items.length > 0) { // 缩进续行并入上一项
+							items[items.length - 1] += ' ' + t;
+							i += 1;
+							continue;
+						}
+						break;
+					}
+					blocks.push(h(ordered ? 'ol' : 'ul', { key: key++, className: 'dsh-rss-mdList' + (ordered ? ' dsh-rss-mdListOrdered' : '') },
+						items.map((item, index) => h('li', { key: index }, mdInline(item, `l${key}-${index}`, altFallback)))));
+					continue;
+				}
+				const para = [];
+				while (i < lines.length && lines[i].trim() !== '' && !isSpecial(lines[i].trim())) {
+					para.push(lines[i]);
+					i += 1;
+				}
+				blocks.push(h('p', { key: key++, className: 'dsh-rss-mdPara' }, mdInline(para.join('\n'), `p${key}`, altFallback)));
+			}
+			return h('div', { className: 'dsh-rss-md' }, blocks);
+		}
+		//#endregion
+
 		/**全文阅读弹窗（Apple 风格磨砂浮层）：外站内容全部纯文本节点渲染，焦点圈定在弹窗内。 */
 		function EntryModal({ item, entry, loading, error, closing, full, onTranslateFull, onRetry, onClose, t }) {
 			const { useEffect, useRef } = React;
@@ -777,14 +1007,18 @@ a.dsh-rss-btn.dsh-rss-modalFooterOpen:hover{background:var(--dsw-alias-interacti
 				bodyNode = h('div', { className: 'dsh-rss-parallel dsh-rss-modalParallel' },
 					h('span', { className: 'dsh-rss-mtChip' }, t('translate.chip')),
 					full.pairs.map((pair, index) => h('div', { key: index, className: 'dsh-rss-pair' },
-						h('div', { className: 'dsh-rss-pairOriginal' }, pair.original),
+						h('div', { className: 'dsh-rss-pairOriginal' },
+							looksLikeMarkdown(pair.original) ? h(MarkdownView, { text: pair.original, altFallback: title }) : pair.original),
 						h('div', { className: 'dsh-rss-pairTrans' }, pair.translated)
 					))
 				);
 			} else if (bodyText) {
-				bodyNode = h('div', { className: 'dsh-rss-modalText' },
-					bodyText.split('\n').map((para, index) => h('p', { key: index, className: 'dsh-rss-modalPara' }, para))
-				);
+				// 命中保守启发式才按 Markdown 呈现（直产 React 元素，零 HTML 注入）；否则维持按 \n 分段纯文本
+				bodyNode = looksLikeMarkdown(bodyText)
+					? h(MarkdownView, { text: bodyText, altFallback: title })
+					: h('div', { className: 'dsh-rss-modalText' },
+						bodyText.split('\n').map((para, index) => h('p', { key: index, className: 'dsh-rss-modalPara' }, para))
+					);
 			} else {
 				bodyNode = null;
 			}
@@ -819,7 +1053,9 @@ a.dsh-rss-btn.dsh-rss-modalFooterOpen:hover{background:var(--dsw-alias-interacti
 							disabled: full.loading || loading || !!error || !bodyText
 						},
 							full.loading ? h(Spinner, { size: 12 }) : null,
-							full.pairs ? t('translate.showOriginal') : t('modal.translate')
+							full.loading && full.progress
+								? t('modal.translating', { done: full.progress.done, total: full.progress.total })
+								: (full.pairs ? t('translate.showOriginal') : t('modal.translate'))
 						)
 					)
 				)
@@ -1266,16 +1502,18 @@ a.dsh-rss-btn.dsh-rss-modalFooterOpen:hover{background:var(--dsw-alias-interacti
 					chars += para.length;
 				}
 				if (batch.length) batches.push(batch);
-				setFullTrans({ loading: true, error: '', pairs: null });
+				setFullTrans({ loading: true, error: '', pairs: null, progress: { done: 0, total: batches.length } });
 				const pairs = [];
 				try {
-					for (const current of batches) {
+					for (let index = 0; index < batches.length; index++) {
+						const current = batches[index];
 						const result = await api.translate({ texts: current, to });
 						const outs = result && Array.isArray(result.items) ? result.items : [];
 						for (let i = 0; i < current.length; i++) {
 							const one = outs[i] || null;
 							pairs.push({ original: current[i], translated: one && typeof one.text === 'string' ? one.text : '' });
 						}
+						setFullTrans({ loading: true, error: '', pairs: null, progress: { done: index + 1, total: batches.length } });
 					}
 					if (cache.size > 60) {
 						const oldest = cache.keys().next().value;

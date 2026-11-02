@@ -9,6 +9,7 @@
  */
 import { buildOpml, parseOpml } from "../lib/opml.js";
 import { htmlToReadableText, parseFeed, salvageFeedDocument } from "../lib/parse.js";
+import { resetTranslationState, translateTexts } from "../lib/translate.js";
 
 const failures = [];
 let passed = 0;
@@ -231,6 +232,80 @@ try {
 	opmlThrew = true;
 }
 ok(opmlThrew, "opml: throws when no feed outlines exist");
+
+// ---------- translate: cooldown, budget, timeout (global fetch stubbed) ----------
+
+/**
+ * Assert that an async function rejects; return its message.
+ * @param {Function} fn - the call under test.
+ * @param {string} label - what the assertion checks.
+ * @returns {Promise<string>} the rejection message ("" on assertion failure).
+ */
+async function rejectMessage(fn, label) {
+	try {
+		await fn();
+	} catch (error) {
+		passed += 1;
+		return error instanceof Error ? error.message : String(error);
+	}
+	failures.push(label);
+	console.error(`FAIL ${label} (did not reject)`);
+	return "";
+}
+
+const realFetch = globalThis.fetch;
+/** Working Bing pair: auth JWT + translate array. */
+const okBingFetch = () => {
+	const jwt = ["head", Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 600 })).toString("base64url"), "sig"].join(".");
+	return async (url) => (String(url).startsWith("https://edge.microsoft.com/")
+		? { ok: true, status: 200, text: async () => jwt }
+		: { ok: true, status: 200, json: async () => [{ translations: [{ text: "你好" }], detectedLanguage: { language: "en" } }] });
+};
+try {
+	resetTranslationState();
+	let calls = 0;
+	globalThis.fetch = async () => {
+		calls += 1;
+		return { ok: false, status: 500 };
+	};
+	let message = await rejectMessage(() => translateTexts(["hello"], "zh-CN"), "translate: failing chain rejects");
+	ok(message.includes("all translation providers failed") && message.includes("bing") && message.includes("google") && message.includes("mymemory"), "translate: failure message names every provider");
+	await rejectMessage(() => translateTexts(["hello"], "zh-CN"), "translate: second failing call rejects");
+	calls = 0;
+	globalThis.fetch = okBingFetch();
+	message = await rejectMessage(() => translateTexts(["hello"], "zh-CN"), "translate: cooling providers are skipped");
+	ok(message.includes("cooling down") && message.split("cooling down").length - 1 === 3, "translate: cooldown trips for all three providers");
+	ok(calls === 0, "translate: cooldown skips the network entirely");
+	resetTranslationState();
+	const translated = await translateTexts(["hello world"], "zh-CN");
+	ok(translated.provider === "bing" && translated.items[0]?.text === "你好" && translated.items[0]?.detected === "en", "translate: bing success path works and resets streaks");
+
+	resetTranslationState();
+	globalThis.fetch = async () => {
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		return { ok: false, status: 500 };
+	};
+	const budgetStart = Date.now();
+	message = await rejectMessage(() => translateTexts(["hello"], "zh-CN", { timeoutMs: 500, budgetMs: 100 }), "translate: exhausted budget rejects");
+	ok(message.includes("budget exceeded"), "translate: budget exhaustion recorded in the message");
+	ok(Date.now() - budgetStart < 2000, "translate: budget failure settles fast");
+
+	resetTranslationState();
+	// Node's AbortSignal.timeout timers are unref'd, so a stub that waits only
+	// on the abort event drains the loop; the ref'd fallback keeps it alive.
+	globalThis.fetch = (url, init) => new Promise((_, reject) => {
+		const done = () => reject(new Error("aborted"));
+		init?.signal?.addEventListener("abort", done);
+		setTimeout(done, 500);
+	});
+	const timeoutStart = Date.now();
+	message = await rejectMessage(() => translateTexts(["hello"], "zh-CN", { timeoutMs: 60, budgetMs: 5000 }), "translate: per-request timeout rejects");
+	ok(message.includes("aborted"), "translate: per-request timeout surfaces abort");
+	ok(Date.now() - timeoutStart < 2000, "translate: timeout failure settles fast");
+} finally {
+	globalThis.fetch = realFetch;
+	resetTranslationState();
+}
 
 if (failures.length > 0) {
 	console.error(`\n${failures.length} assertion(s) failed; ${passed} passed.`);

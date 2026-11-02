@@ -82,6 +82,10 @@ class RssReaderService extends TypertRemoteService {
 	}
 
 	// ---------- Remote methods (parameter names are wire field names) ----------
+	// NOTE: every RemoteError MUST carry a `details` argument ({} when empty) —
+	// the Host gateway encodes `details: undefined` verbatim, JSON drops the
+	// key, and the client connection then rejects the whole envelope with
+	// "connection: invalid server-response failure".
 
 	/** Full panel snapshot: feeds plus the newest items across all sources. */
 	state() {
@@ -102,7 +106,7 @@ class RssReaderService extends TypertRemoteService {
 	async entry(request) {
 		const id = String(request?.id ?? "");
 		const item = this.hub.entryItem(id);
-		if (item === null) throw new RemoteError("rss/not-found", `no entry with id "${id}"`);
+		if (item === null) throw new RemoteError("rss/not-found", `no entry with id "${id}"`, {});
 		return {
 			id: item.id,
 			feedId: item.feedId,
@@ -120,7 +124,7 @@ class RssReaderService extends TypertRemoteService {
 		try {
 			return await this.hub.refresh(request?.feedId);
 		} catch (error) {
-			throw new RemoteError("rss/refresh-failed", errorMessage(error));
+			throw new RemoteError("rss/refresh-failed", errorMessage(error), {});
 		}
 	}
 
@@ -129,7 +133,7 @@ class RssReaderService extends TypertRemoteService {
 		try {
 			return await this.hub.addFeed(request);
 		} catch (error) {
-			throw new RemoteError("rss/add-failed", errorMessage(error));
+			throw new RemoteError("rss/add-failed", errorMessage(error), {});
 		}
 	}
 
@@ -138,7 +142,7 @@ class RssReaderService extends TypertRemoteService {
 		try {
 			return this.hub.removeFeed(request);
 		} catch (error) {
-			throw new RemoteError("rss/remove-failed", errorMessage(error));
+			throw new RemoteError("rss/remove-failed", errorMessage(error), {});
 		}
 	}
 
@@ -147,7 +151,7 @@ class RssReaderService extends TypertRemoteService {
 		try {
 			return this.hub.renameFeed(request);
 		} catch (error) {
-			throw new RemoteError("rss/rename-failed", errorMessage(error));
+			throw new RemoteError("rss/rename-failed", errorMessage(error), {});
 		}
 	}
 
@@ -159,14 +163,14 @@ class RssReaderService extends TypertRemoteService {
 	async translate(request) {
 		const rawTexts = Array.isArray(request?.texts) ? request.texts : [];
 		const texts = rawTexts.map((text) => String(text ?? "").trim()).filter((text) => text.length > 0).slice(0, 50).map((text) => text.slice(0, 900));
-		if (texts.length === 0) throw new RemoteError("rss/translate-failed", "texts must contain at least one non-empty string");
-		if (texts.reduce((total, text) => total + text.length, 0) > 6000) throw new RemoteError("rss/translate-failed", "texts exceed 6000 characters in total");
+		if (texts.length === 0) throw new RemoteError("rss/translate-failed", "texts must contain at least one non-empty string", {});
+		if (texts.reduce((total, text) => total + text.length, 0) > 6000) throw new RemoteError("rss/translate-failed", "texts exceed 6000 characters in total", {});
 		const to = String(request?.to ?? "").trim();
-		if (!/^[a-zA-Z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(to)) throw new RemoteError("rss/translate-failed", `invalid target language: ${to}`);
+		if (!/^[a-zA-Z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(to)) throw new RemoteError("rss/translate-failed", `invalid target language: ${to}`, {});
 		try {
 			return await translateTexts(texts, to, { proxyUrl: this.hub.opts.proxyUrl });
 		} catch (error) {
-			throw new RemoteError("rss/translate-failed", errorMessage(error));
+			throw new RemoteError("rss/translate-failed", errorMessage(error), {});
 		}
 	}
 
@@ -182,13 +186,13 @@ class RssReaderService extends TypertRemoteService {
 	 */
 	async importOpml(request) {
 		const xml = String(request?.xml ?? "");
-		if (xml.trim().length === 0) throw new RemoteError("rss/import-failed", "xml is required (the OPML document text)");
-		if (xml.length > 2_000_000) throw new RemoteError("rss/import-failed", "OPML document exceeds 2 MB");
+		if (xml.trim().length === 0) throw new RemoteError("rss/import-failed", "xml is required (the OPML document text)", {});
+		if (xml.length > 2_000_000) throw new RemoteError("rss/import-failed", "OPML document exceeds 2 MB", {});
 		let candidates;
 		try {
 			candidates = parseOpml(xml);
 		} catch (error) {
-			throw new RemoteError("rss/import-failed", errorMessage(error));
+			throw new RemoteError("rss/import-failed", errorMessage(error), {});
 		}
 		if (candidates.length > 200) candidates = candidates.slice(0, 200);
 		let added = 0;

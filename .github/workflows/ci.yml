@@ -31,3 +31,6 @@ jobs:
 
       - name: Run hub tests (test/hub.mjs)
         run: node test/hub.mjs
+
+      - name: Run markdown tests (test/markdown.mjs)
+        run: node test/markdown.mjs
