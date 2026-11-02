@@ -93,6 +93,28 @@ class RssReaderService extends TypertRemoteService {
 		return { items: this.hub.itemsFor(request) };
 	}
 
+	/**
+	 * One entry with its full text: the panel's modal reads this by item id
+	 * when the user opens an entry. `content` is the stored plain-text body
+	 * ('' for entries fetched before full text was retained); an unknown id
+	 * fails with `rss/not-found`.
+	 */
+	async entry(request) {
+		const id = String(request?.id ?? "");
+		const item = this.hub.entryItem(id);
+		if (item === null) throw new RemoteError("rss/not-found", `no entry with id "${id}"`);
+		return {
+			id: item.id,
+			feedId: item.feedId,
+			feedTitle: item.feedTitle,
+			title: item.title,
+			link: item.link,
+			publishedAt: item.publishedAt,
+			summary: item.summary,
+			content: typeof item.content === "string" ? item.content : ""
+		};
+	}
+
 	/** Refresh one feed (`feedId`) or every feed; returns the fresh snapshot. */
 	async refresh(request) {
 		try {
@@ -254,6 +276,7 @@ Object.defineProperty(RssReaderService.prototype, REMOTE_METHODS_KEY, {
 		methods: Object.freeze([
 			remoteMarker("state"),
 			remoteMarker("items"),
+			remoteMarker("entry"),
 			remoteMarker("refresh"),
 			remoteMarker("addFeed"),
 			remoteMarker("removeFeed"),

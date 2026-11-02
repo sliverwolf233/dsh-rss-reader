@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax-check sources and tests
+        run: |
+          set -e
+          for f in index.js client.js lib/*.js test/*.mjs; do
+            echo "node --check $f"
+            node --check "$f"
+          done
+
+      - name: Run parser tests (test/run.mjs)
+        run: node test/run.mjs
+
+      - name: Run hub tests (test/hub.mjs)
+        run: node test/hub.mjs

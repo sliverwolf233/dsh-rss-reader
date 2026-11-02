@@ -162,6 +162,120 @@ try {
 	ok(second.definitions.length === 4, "reload: tools re-registered");
 	await hub2.dispose();
 
+	// ---------- entry content: lookup, wire payloads, persistence ----------
+
+	const entryPath = join(workDir, "entry-store.json");
+	const fullBody = "First paragraph.\n\nSecond paragraph — the full body is kept.";
+	await writeFile(entryPath, `${JSON.stringify({
+		version: 1,
+		feeds: [
+			{ id: "feedfull0000", url: "https://full.example/feed.xml", title: "Full Text Feed", siteLink: "https://full.example/", kind: "rss", headers: {}, lastFetchedAt: 1700000000000, error: null },
+			{ id: "feedlegacy00", url: "https://legacy.example/feed.xml", title: "Legacy Feed", siteLink: "https://legacy.example/", kind: "rss", headers: {}, lastFetchedAt: null, error: null }
+		],
+		itemsByFeed: {
+			feedfull0000: [
+				{ id: "feedfull0000|post-9", feedId: "feedfull0000", feedTitle: "Full Text Feed", title: "With full text", link: "https://full.example/9", publishedAt: 1700000090000, summary: "Summary of nine", content: fullBody }
+			],
+			feedlegacy00: [
+				{ id: "feedlegacy00|post-1", feedId: "feedlegacy00", feedTitle: "Legacy Feed", title: "Stored before content", link: "https://legacy.example/1", publishedAt: 1600000090000, summary: "Old summary" }
+			]
+		}
+	})}\n`, "utf8");
+
+	const fourth = fakeContext();
+	const entryHub = createHub(fourth.ctx, { fetchOnStart: false }, { dataPath: entryPath });
+	await entryHub.ready;
+
+	const fullEntry = entryHub.entryItem("feedfull0000|post-9");
+	ok(fullEntry !== null && fullEntry.content === fullBody, "entry: hub.entryItem returns the stored full text");
+	ok(fullEntry !== null && fullEntry.summary === "Summary of nine" && fullEntry.feedTitle === "Full Text Feed" && fullEntry.link === "https://full.example/9", "entry: entry fields intact alongside content");
+
+	const legacyEntry = entryHub.entryItem("feedlegacy00|post-1");
+	ok(legacyEntry !== null && legacyEntry.content === "", "entry: legacy item without content reads as ''");
+	ok(entryHub.entryItem("nope|missing") === null && entryHub.entryItem("") === null, "entry: unknown or empty id yields null");
+
+	ok(entryHub.snapshot().items.every((item) => !("content" in item)), "wire: snapshot items carry no content field");
+	ok(entryHub.itemsFor({}).every((item) => !("content" in item) && typeof item.summary === "string"), "wire: items() payload stays summary-only");
+
+	await entryHub.dispose();
+	const repersisted = JSON.parse(await readFile(entryPath, "utf8"));
+	ok(repersisted.itemsByFeed.feedfull0000[0].content === fullBody, "persist: content round-trips through the store file");
+
+	const fifth = fakeContext();
+	const reloadHub = createHub(fifth.ctx, { fetchOnStart: false }, { dataPath: entryPath });
+	await reloadHub.ready;
+	ok(reloadHub.entryItem("feedfull0000|post-9")?.content === fullBody, "reload: content preserved after re-loading the store");
+	await reloadHub.dispose();
+
+	// ---------- fetch → mapItems content (global fetch stubbed) ----------
+
+	const STUB_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Stub Feed</title>
+    <link>https://stub.example/</link>
+    <description>stub</description>
+    <item>
+      <title>Full body</title>
+      <link>https://stub.example/1</link>
+      <guid>stub-1</guid>
+      <pubDate>Wed, 07 Jan 2026 10:00:00 GMT</pubDate>
+      <description>short summary</description>
+      <content:encoded><![CDATA[<p>Para one.</p><p>Para two.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Summary only</title>
+      <link>https://stub.example/2</link>
+      <guid>stub-2</guid>
+      <pubDate>Thu, 08 Jan 2026 10:00:00 GMT</pubDate>
+      <description>fallback text</description>
+    </item>
+    <item>
+      <title>Huge body</title>
+      <link>https://stub.example/3</link>
+      <guid>stub-3</guid>
+      <pubDate>Fri, 09 Jan 2026 10:00:00 GMT</pubDate>
+      <content:encoded><![CDATA[${"x".repeat(25000)}]]></content:encoded>
+    </item>
+  </channel>
+</rss>`;
+	const PROXY_ENV = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
+	const savedProxyEnv = new Map(PROXY_ENV.map((name) => [name, process.env[name]]));
+	for (const name of PROXY_ENV) delete process.env[name];
+	const realFetch = globalThis.fetch;
+	globalThis.fetch = async () => ({ ok: true, text: async () => STUB_XML });
+	try {
+		const stubPath = join(workDir, "stub-store.json");
+		const sixth = fakeContext();
+		const stubHub = createHub(sixth.ctx, { fetchOnStart: false, historyPerFeed: 50, initialFeeds: ["https://stub.example/feed.xml"] }, { dataPath: stubPath });
+		await stubHub.ready;
+		await stubHub.refresh();
+		const listed = stubHub.itemsFor({ limit: 10 });
+		ok(listed.length === 3, "fetch: stubbed feed yields three items");
+		ok(stubHub.snapshot().items.every((item) => !("content" in item)), "wire: fetched snapshot stays summary-only");
+		const byTitle = new Map(listed.map((item) => [item.title, item]));
+		ok(byTitle.get("Full body") !== undefined && stubHub.entryItem(byTitle.get("Full body").id)?.content === "Para one.\n\nPara two.", "fetch: content taken from content:encoded");
+		ok(byTitle.get("Full body").summary === "short summary", "fetch: summary still prefers the description");
+		ok(byTitle.get("Summary only") !== undefined && stubHub.entryItem(byTitle.get("Summary only").id)?.content === "fallback text", "fetch: content falls back to summary text");
+		const hugeId = byTitle.get("Huge body").id;
+		ok(hugeId !== undefined && stubHub.entryItem(hugeId)?.content.length === 20000, "fetch: content clipped at 20000 characters");
+		await stubHub.persisted();
+		const stubFile = JSON.parse(await readFile(stubPath, "utf8"));
+		const stubItems = Object.values(stubFile.itemsByFeed)[0];
+		ok(stubItems.length === 3 && typeof stubItems.find((item) => item.id === hugeId)?.content === "string", "persist: fetched content written to the store file");
+		const seventh = fakeContext();
+		const stubReload = createHub(seventh.ctx, { fetchOnStart: false }, { dataPath: stubPath });
+		await stubReload.ready;
+		ok(stubReload.entryItem(byTitle.get("Full body").id)?.content === "Para one.\n\nPara two.", "reload: fetched content survives a store reload");
+		await stubReload.dispose();
+		await stubHub.dispose();
+	} finally {
+		globalThis.fetch = realFetch;
+		for (const [name, value] of savedProxyEnv) {
+			if (value !== undefined) process.env[name] = value;
+		}
+	}
+
 	// ---------- corrupt store quarantine ----------
 
 	const corruptPath = join(workDir, "corrupt.json");
