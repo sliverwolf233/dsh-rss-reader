@@ -42,6 +42,7 @@ historyPerFeed: 200    # items retained per feed in the persistent store
 autoRefreshMinutes: 10 # 0 disables auto refresh
 fetchOnStart: true     # fetch every feed once at startup
 proxyUrl: 'http://127.0.0.1:7897' # route feed fetches and translation through this HTTP proxy; falls back to direct when unreachable; '' disables (HTTPS_PROXY env is honored when unset)
+llmFallback: false    # optional paid LLM fallback via DeepSeek account, off by default
 registerTools: true    # master switch for the four tools
 statusTool: true       # statusToolName: rss_status
 refreshTool: true      # refreshToolName: rss_refresh

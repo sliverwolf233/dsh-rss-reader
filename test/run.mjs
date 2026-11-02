@@ -7,6 +7,7 @@
  *
  * @module rss-reader/test
  */
+import { readFileSync } from "node:fs";
 import { buildOpml, parseOpml } from "../lib/opml.js";
 import { htmlToReadableText, parseFeed, salvageFeedDocument } from "../lib/parse.js";
 import { resetTranslationState, translateTexts } from "../lib/translate.js";
@@ -302,6 +303,70 @@ try {
 	message = await rejectMessage(() => translateTexts(["hello"], "zh-CN", { timeoutMs: 60, budgetMs: 5000 }), "translate: per-request timeout rejects");
 	ok(message.includes("aborted"), "translate: per-request timeout surfaces abort");
 	ok(Date.now() - timeoutStart < 2000, "translate: timeout failure settles fast");
+} finally {
+	globalThis.fetch = realFetch;
+	resetTranslationState();
+}
+
+// ---------- translate: injected LLM fallback provider (harness) ----------
+
+try {
+	// ① external three fail (stubbed 500) → injected llm wins as provider 'harness'
+	resetTranslationState();
+	globalThis.fetch = async () => ({ ok: false, status: 500 });
+	const viaLlm = await translateTexts(["hello"], "zh-CN", { llmTranslate: async (batch, to) => batch.map((text) => ({ detected: null, text: `LLM:${text}:${to}` })) });
+	ok(viaLlm.provider === "harness" && viaLlm.items[0]?.text === "LLM:hello:zh-CN" && viaLlm.items[0]?.detected === null, "llm: injected fallback wins after external failures");
+
+	// ② llmTranslate absent → chain unchanged (aggregate names only the three external providers)
+	resetTranslationState();
+	const noLlmMessage = await rejectMessage(() => translateTexts(["hello"], "zh-CN"), "llm: absent injection still rejects");
+	ok(noLlmMessage.includes("all translation providers failed") && !noLlmMessage.includes("harness"), "llm: absent injection leaves the chain unchanged");
+
+	// ③ cooldown covers the injected provider
+	resetTranslationState();
+	let llmCalls = 0;
+	const failingLlm = async () => {
+		llmCalls += 1;
+		throw new Error("llm down");
+	};
+	await rejectMessage(() => translateTexts(["hello"], "zh-CN", { llmTranslate: failingLlm }), "llm: failing llm call 1");
+	await rejectMessage(() => translateTexts(["hello"], "zh-CN", { llmTranslate: failingLlm }), "llm: failing llm call 2");
+	const cooledMessage = await rejectMessage(() => translateTexts(["hello"], "zh-CN", { llmTranslate: failingLlm }), "llm: cooled-down llm call 3");
+	ok(cooledMessage.includes("harness: skipped — cooling down after repeated failures"), "llm: harness joins the cooldown");
+	ok(llmCalls === 2, "llm: cooldown skips the injected provider entirely");
+} finally {
+	globalThis.fetch = realFetch;
+	resetTranslationState();
+}
+
+// ---------- LLM fallback gate (shouldInjectLlm, extracted from index.js) ----------
+
+// index.js is a Host module whose peer deps only resolve inside the Harness
+// profile, so its marker-wrapped gate function is sliced and evaluated here —
+// the same as-shipped-extraction pattern test/markdown.mjs uses.
+const indexSource = readFileSync(new URL("../index.js", import.meta.url), "utf8");
+const gateStart = indexSource.indexOf("// [llm-gate-start]");
+const gateEnd = indexSource.indexOf("// [llm-gate-end]");
+if (gateStart === -1 || gateEnd === -1) throw new Error("llm-gate markers not found in index.js");
+// `new Function` bodies cannot carry `export`; the marker region holds exactly
+// one exported function, so stripping the keyword keeps the code identical.
+const gateBody = indexSource.slice(gateStart, gateEnd).replace("export function", "function");
+const { shouldInjectLlm } = new Function(`${gateBody}\nreturn { shouldInjectLlm };`)();
+
+ok(shouldInjectLlm({ llmFallback: true }) === true, "gate: explicit true injects");
+ok(shouldInjectLlm({ llmFallback: false }) === false, "gate: explicit false stays off");
+ok(shouldInjectLlm({}) === false, "gate: absent flag defaults off");
+ok(shouldInjectLlm(undefined) === false, "gate: missing config stays off");
+ok(shouldInjectLlm({ llmFallback: "yes" }) === false, "gate: truthy non-boolean does not inject");
+
+// Mirror the service-layer composition: an off config must pass `undefined`
+// as llmTranslate, leaving no harness attempt in the chain at all.
+resetTranslationState();
+try {
+	globalThis.fetch = async () => ({ ok: false, status: 500 });
+	const gated = shouldInjectLlm({ llmFallback: false }) ? (async () => [{ detected: null, text: "never" }]) : undefined;
+	const gatedMessage = await rejectMessage(() => translateTexts(["hello"], "zh-CN", { llmTranslate: gated }), "gate: off config still rejects via external chain");
+	ok(gatedMessage.includes("all translation providers failed") && !gatedMessage.includes("harness"), "gate: off config never wires the llm provider");
 } finally {
 	globalThis.fetch = realFetch;
 	resetTranslationState();

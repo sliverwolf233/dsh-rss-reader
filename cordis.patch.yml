@@ -16,4 +16,7 @@
         # 本机代理（Clash 等）：抓取与翻译优先走它，代理不在线时自动直连。
         # 留空 '' 则完全直连（也可用环境变量 HTTPS_PROXY）。
         proxyUrl: 'http://127.0.0.1:7897'
+        # 翻译兜底（默认关闭）：true 时外部翻译服务全部失败后改用本机 DeepSeek 账号
+        # LLM 翻译——消耗 API 额度，并会创建专用会话 rss-reader-translations。
+        llmFallback: false
         registerTools: true       # 注册 Agent 工具 rss_status/rss_refresh/rss_read/rss_manage

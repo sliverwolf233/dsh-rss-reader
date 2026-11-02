@@ -37,6 +37,8 @@ class RssReaderService extends TypertRemoteService {
 		autoRefreshMinutes: z.number().default(10),
 		fetchOnStart: z.boolean().default(true),
 		proxyUrl: z.string().default("http://127.0.0.1:7897"),
+		/** 翻译兜底：true 时外部翻译服务全败后改用本机 DeepSeek 账号 LLM 翻译——消耗 API 额度，默认关闭。 */
+		llmFallback: z.boolean().default(false),
 		registerTools: z.boolean().default(true),
 		statusTool: z.boolean().default(true),
 		statusToolName: z.string().default("rss_status"),
@@ -51,6 +53,7 @@ class RssReaderService extends TypertRemoteService {
 	constructor(ctx, config) {
 		super(ctx, "rssReader", { namespace: "rss" });
 		this.config = config;
+		this.ctx = ctx;
 		this.subscribers = new Set();
 		this.hub = createHub(ctx, config, {
 			logger: ctx.logger,
@@ -158,7 +161,8 @@ class RssReaderService extends TypertRemoteService {
 	/**
 	 * Translate a batch of display texts to one target language for the
 	 * panel's parallel view and selection popover. Provider chain: Bing →
-	 * Google → MyMemory, each routed through the configured proxy.
+	 * Google → MyMemory (each routed through the configured proxy) → the
+	 * Harness `translator` service's LLM routes as the local fallback.
 	 */
 	async translate(request) {
 		const rawTexts = Array.isArray(request?.texts) ? request.texts : [];
@@ -168,7 +172,7 @@ class RssReaderService extends TypertRemoteService {
 		const to = String(request?.to ?? "").trim();
 		if (!/^[a-zA-Z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(to)) throw new RemoteError("rss/translate-failed", `invalid target language: ${to}`, {});
 		try {
-			return await translateTexts(texts, to, { proxyUrl: this.hub.opts.proxyUrl });
+			return await translateTexts(texts, to, { proxyUrl: this.hub.opts.proxyUrl, llmTranslate: shouldInjectLlm(this.config) ? buildLlmTranslate(this.ctx) : undefined });
 		} catch (error) {
 			throw new RemoteError("rss/translate-failed", errorMessage(error), {});
 		}
@@ -251,6 +255,86 @@ class RssReaderService extends TypertRemoteService {
 function errorMessage(error) {
 	if (error instanceof Error) return error.message;
 	return String(error);
+}
+
+/** Durable Session the LLM fallback stores its translations under. */
+const LLM_TRANSLATION_SESSION_ID = "rss-reader-translations";
+
+// [llm-gate-start]
+/**
+ * Whether the paid LLM fallback provider may be wired into the translation
+ * chain. Strictly opt-in: only an explicit `llmFallback: true` injects —
+ * absent, false, or truthy non-boolean configs all stay off, so the plugin
+ * never spends DeepSeek API quota (and never creates the translation
+ * session) unless the user asked for it.
+ * @param {object} config - plugin config row.
+ * @returns {boolean} true only when `config.llmFallback === true`.
+ */
+export function shouldInjectLlm(config) {
+	return config?.llmFallback === true;
+}
+// [llm-gate-end]
+
+/**
+ * The `translator` service's LLM routes (deepseek-account / deepseek-official)
+ * persist through an existing durable Session: `resolve` demands `sessionId`
+ * and uncached calls need a live session. Keep one dedicated plugin-owned
+ * session (fiber-scoped: unloading the plugin removes it from the store,
+ * persisted translation records remain readable on disk).
+ * @param {object} ctx - plugin context with the optional `sessions` service.
+ * @returns {Promise<string>} the session id.
+ */
+async function ensureLlmTranslationSession(ctx) {
+	const sessions = ctx.get?.("sessions");
+	if (sessions === undefined) throw new Error("sessions service unavailable");
+	let session = sessions.get(LLM_TRANSLATION_SESSION_ID);
+	if (session === undefined) {
+		try {
+			session = sessions.create(LLM_TRANSLATION_SESSION_ID);
+		} catch {
+			session = sessions.get(LLM_TRANSLATION_SESSION_ID);
+		}
+		if (session === undefined) throw new Error("translation session unavailable");
+	}
+	try {
+		await sessions.flush?.(session);
+	} catch {
+		// flushing eagerly is best-effort; storage writes flush again anyway
+	}
+	return LLM_TRANSLATION_SESSION_ID;
+}
+
+/**
+ * Build the injected 4th provider on the Harness `translator` service (LLM
+ * routes, no network of its own). Returns undefined whenever the optional
+ * service (or an eligible LLM route) is absent, so the chain stays unchanged.
+ * @param {object} ctx - plugin context with the optional `translator` service.
+ * @returns {Function|undefined} `async (texts, to) => items`.
+ */
+function buildLlmTranslate(ctx) {
+	if (typeof ctx?.get !== "function") return undefined;
+	const translator = ctx.get("translator");
+	if (translator === undefined || typeof translator.availableProviders !== "function" || typeof translator.translate !== "function") return undefined;
+	return async function llmTranslate(texts, to) {
+		const routes = await translator.availableProviders();
+		const route = Array.isArray(routes) ? routes.find((name) => typeof name === "string" && name.startsWith("deepseek")) : undefined;
+		if (route === undefined) throw new Error(`no eligible LLM route (available: ${Array.isArray(routes) ? routes.join(", ") : "none"})`);
+		const sessionId = await ensureLlmTranslationSession(ctx);
+		const items = [];
+		// The service translates one resolved text at a time; run small batches.
+		const PARALLEL = 4;
+		for (let offset = 0; offset < texts.length; offset += PARALLEL) {
+			const batch = texts.slice(offset, offset + PARALLEL);
+			const done = await Promise.all(batch.map(async (text) => {
+				const spec = translator.resolve({ text, targetLanguage: to, sourceLanguage: "auto", provider: route, sessionId });
+				const result = await translator.translate(spec);
+				if (typeof result !== "string") throw new Error("translator returned non-text output");
+				return { detected: null, text: result };
+			}));
+			items.push(...done);
+		}
+		return items;
+	};
 }
 
 /**
